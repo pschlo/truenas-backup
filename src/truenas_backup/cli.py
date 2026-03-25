@@ -206,24 +206,24 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--outdir",
-        default=os.environ.get("TRUENAS_OUTDIR", "."),
-        help="Output directory, default: current directory or TRUENAS_OUTDIR",
+        required=True,
+        help="Output directory",
     )
     parser.add_argument(
         "--name-prefix",
-        default=os.environ.get("TRUENAS_NAME_PREFIX", "truenas"),
+        default="truenas",
         help="Filename prefix",
     )
     parser.add_argument(
         "--keep",
         type=int,
-        default=int(os.environ.get("TRUENAS_KEEP", "0")),
+        default=0,
         help="Keep only newest N backups; 0 disables pruning",
     )
     parser.add_argument(
         "--timeout",
         type=float,
-        default=float(os.environ.get("TRUENAS_TIMEOUT", "30")),
+        default=30,
         help="Network timeout in seconds",
     )
     parser.add_argument(
