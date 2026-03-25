@@ -328,7 +328,14 @@ def main() -> int:
         return 2
 
     outdir = pathlib.Path(args.outdir).expanduser().resolve()
-    outdir.mkdir(parents=True, exist_ok=True)
+    if not outdir.exists():
+        raise TrueNASBackupError(f"Output directory does not exist: {outdir}")
+
+    if not outdir.is_dir():
+        raise TrueNASBackupError(f"Output path is not a directory: {outdir}")
+
+    if not os.access(outdir, os.W_OK):
+        raise TrueNASBackupError(f"Output directory is not writable: {outdir}")
 
     ext = ".tar" if (not args.no_secretseed or args.include_root_authorized_keys) else ".db"
     filename = f"{args.name_prefix}-config-{utc_timestamp()}{ext}"
