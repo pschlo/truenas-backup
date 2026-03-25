@@ -7,8 +7,11 @@ import hashlib
 import json
 import os
 import pathlib
+import shutil
 import ssl
 import sys
+import tarfile
+import tempfile
 import urllib.parse
 import urllib.request
 
@@ -146,23 +149,81 @@ def sha256_file(path: pathlib.Path) -> str:
     return h.hexdigest()
 
 
-def download_file(url: str, dest: pathlib.Path, insecure: bool, timeout: float) -> None:
+def verify_backup_file(path: pathlib.Path, expected_ext: str) -> None:
+    if not path.exists():
+        raise TrueNASBackupError(f"Downloaded file does not exist: {path}")
+
+    size = path.stat().st_size
+    if size <= 0:
+        raise TrueNASBackupError(f"Downloaded file is empty: {path}")
+
+    if expected_ext == ".tar":
+        if not tarfile.is_tarfile(path):
+            raise TrueNASBackupError(f"Downloaded file is not a valid tar archive: {path}")
+
+
+def download_file(url: str, dest: pathlib.Path, insecure: bool, timeout: float) -> int:
     ctx = ssl.create_default_context()
     if insecure:
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
 
     req = urllib.request.Request(url, method="GET")
-    with urllib.request.urlopen(req, context=ctx, timeout=timeout) as resp:
-        if getattr(resp, "status", 200) != 200:
-            raise TrueNASBackupError(f"Download failed with HTTP status {resp.status}")
 
-        with dest.open("wb") as out:
-            while True:
-                chunk = resp.read(1024 * 1024)
-                if not chunk:
-                    break
-                out.write(chunk)
+    tmp_fd = None
+    tmp_path: pathlib.Path | None = None
+    bytes_written = 0
+
+    try:
+        with urllib.request.urlopen(req, context=ctx, timeout=timeout) as resp:
+            status = getattr(resp, "status", 200)
+            if status != 200:
+                raise TrueNASBackupError(f"Download failed with HTTP status {status}")
+
+            content_length_header = resp.headers.get("Content-Length")
+            expected_length = int(content_length_header) if content_length_header else None
+
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                dir=dest.parent,
+                prefix=dest.name + ".",
+                suffix=".tmp",
+                delete=False,
+            ) as tmp:
+                tmp_fd = tmp
+                tmp_path = pathlib.Path(tmp.name)
+
+                while True:
+                    chunk = resp.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    tmp.write(chunk)
+                    bytes_written += len(chunk)
+
+        if expected_length is not None and bytes_written != expected_length:
+            raise TrueNASBackupError(
+                f"Download size mismatch: expected {expected_length} bytes, got {bytes_written} bytes"
+            )
+
+        if tmp_path is None:
+            raise TrueNASBackupError("Temporary download file was not created")
+
+        tmp_path.replace(dest)
+        return bytes_written
+
+    except Exception:
+        if tmp_path is not None:
+            try:
+                tmp_path.unlink()
+            except FileNotFoundError:
+                pass
+        raise
+    finally:
+        if tmp_fd is not None:
+            try:
+                tmp_fd.close()
+            except Exception:
+                pass
 
 
 def prune_old_backups(outdir: pathlib.Path, prefix: str, keep: int) -> list[pathlib.Path]:
@@ -170,7 +231,7 @@ def prune_old_backups(outdir: pathlib.Path, prefix: str, keep: int) -> list[path
         return []
 
     candidates = sorted(
-        [p for p in outdir.iterdir() if p.is_file() and p.name.startswith(prefix + "-config-")],
+        [p for p in outdir.iterdir() if p.is_file() and p.name.startswith(prefix + "-config-") and p.suffix != ".sha256"],
         key=lambda p: p.name,
         reverse=True,
     )
@@ -241,6 +302,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Include /root/.ssh/authorized_keys",
     )
+    parser.add_argument(
+        "--write-sha256",
+        action="store_true",
+        help="Write a sidecar .sha256 file for later integrity verification",
+    )
     return parser.parse_args()
 
 
@@ -281,22 +347,29 @@ def main() -> int:
         )
 
         download_url = build_download_url(args.host, download_path)
-        download_file(download_url, dest, args.insecure, args.timeout)
+        bytes_written = download_file(download_url, dest, args.insecure, args.timeout)
+        verify_backup_file(dest, ext)
 
-        digest = sha256_file(dest)
-        sha_path = pathlib.Path(str(dest) + ".sha256")
-        sha_path.write_text(f"{digest}  {dest.name}\n", encoding="utf-8")
+        digest = None
+        if args.write_sha256:
+            digest = sha256_file(dest)
+            sha_path = pathlib.Path(str(dest) + ".sha256")
+            sha_path.write_text(f"{digest}  {dest.name}\n", encoding="utf-8")
 
         removed = prune_old_backups(outdir, args.name_prefix, args.keep)
 
-        print(json.dumps({
+        result = {
             "ok": True,
             "host": args.host,
             "job_id": job_id,
             "saved_to": str(dest),
-            "sha256": digest,
+            "bytes_written": bytes_written,
             "pruned": [str(p) for p in removed],
-        }, indent=2))
+        }
+        if digest is not None:
+            result["sha256"] = digest
+
+        print(json.dumps(result, indent=2))
         return 0
 
     except TrueNASBackupError as exc:
