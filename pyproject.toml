@@ -1,0 +1,16 @@
+[project]
+name = "truenas-backup"
+version = "0.1.0"
+description = "Backup TrueNAS SCALE configuration via the JSON-RPC WebSocket API"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "websocket-client>=1.8.0",
+]
+
+[project.scripts]
+truenas-backup = "truenas_backup.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.0,<0.12"]
+build-backend = "uv_build"
