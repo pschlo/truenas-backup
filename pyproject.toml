@@ -1,6 +1,6 @@
 [project]
 name = "truenas-backup"
-version = "0.1.3"
+version = "0.1.4"
 description = "Backup TrueNAS SCALE configuration via the JSON-RPC WebSocket API"
 readme = "README.md"
 requires-python = ">=3.10"
