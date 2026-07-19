@@ -11,6 +11,12 @@ dependencies = [
 [project.scripts]
 truenas-backup = "truenas_backup.cli:main"
 
+[dependency-groups]
+dev = ["pytest>=8.4"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [build-system]
 requires = ["uv_build>=0.11.0,<0.12"]
 build-backend = "uv_build"
